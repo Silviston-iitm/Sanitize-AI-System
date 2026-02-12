@@ -1,7 +1,7 @@
 import time
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request
 from pydantic import BaseModel
-from typing import Dict
+from typing import Dict, List
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -18,10 +18,9 @@ app.add_middleware(
 # ================= RATE LIMIT CONFIG =================
 RATE_PER_MINUTE = 32
 BURST_CAPACITY = 13
-REFILL_RATE_PER_SEC = RATE_PER_MINUTE / 60.0  # tokens per second
 
-# In-memory token buckets
-buckets: Dict[str, dict] = {}
+# Store request timestamps per user/IP
+request_log: Dict[str, List[float]] = {}
 
 
 # ================= REQUEST MODEL =================
@@ -31,35 +30,26 @@ class SecurityRequest(BaseModel):
     category: str
 
 
-# ================= TOKEN BUCKET FUNCTION =================
+# ================= FIXED WINDOW RATE LIMIT =================
 def check_rate_limit(key: str):
     now = time.time()
 
-    if key not in buckets:
-        buckets[key] = {
-            "tokens": BURST_CAPACITY,
-            "last_refill": now
-        }
+    if key not in request_log:
+        request_log[key] = []
 
-    bucket = buckets[key]
+    # Remove requests older than 60 seconds
+    request_log[key] = [
+        t for t in request_log[key]
+        if now - t < 60
+    ]
 
-    # Refill tokens
-    elapsed = now - bucket["last_refill"]
-    refill = elapsed * REFILL_RATE_PER_SEC
-    bucket["tokens"] = min(
-        BURST_CAPACITY,
-        bucket["tokens"] + refill
-    )
-    bucket["last_refill"] = now
+    # Enforce burst limit
+    if len(request_log[key]) >= BURST_CAPACITY:
+        return False, 60
 
-    if bucket["tokens"] >= 1:
-        bucket["tokens"] -= 1
-        return True, 0
-    else:
-        # calculate retry time
-        needed = 1 - bucket["tokens"]
-        retry_after = needed / REFILL_RATE_PER_SEC
-        return False, int(retry_after) + 1
+    # Allow request
+    request_log[key].append(now)
+    return True, 0
 
 
 # ================= SECURITY ENDPOINT =================
@@ -73,7 +63,6 @@ async def security_check(data: SecurityRequest, request: Request):
         allowed, retry_after = check_rate_limit(key)
 
         if not allowed:
-            # Log event
             print(f"[SECURITY] Rate limit exceeded for {key}")
 
             response = {
@@ -89,7 +78,6 @@ async def security_check(data: SecurityRequest, request: Request):
                 headers={"Retry-After": str(retry_after)}
             )
 
-        # If allowed
         response = {
             "blocked": False,
             "reason": "Input passed all security checks",
@@ -100,7 +88,6 @@ async def security_check(data: SecurityRequest, request: Request):
         return response
 
     except Exception:
-        # Do not leak system info
         return JSONResponse(
             status_code=400,
             content={
