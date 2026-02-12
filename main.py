@@ -1,7 +1,5 @@
 import time
 from fastapi import FastAPI, Request
-from pydantic import BaseModel
-from typing import Dict, List
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -16,39 +14,32 @@ app.add_middleware(
 )
 
 # ================= RATE LIMIT CONFIG =================
-RATE_PER_MINUTE = 32
 BURST_CAPACITY = 13
 
-# Store request timestamps per user/IP
-request_log: Dict[str, List[float]] = {}
+# Track first request time and count
+rate_state = {}
 
-
-# ================= REQUEST MODEL =================
-class SecurityRequest(BaseModel):
-    userId: str
-    input: str
-    category: str
-
-
-# ================= FIXED WINDOW RATE LIMIT =================
 def check_rate_limit(key: str):
     now = time.time()
 
-    if key not in request_log:
-        request_log[key] = []
+    if key not in rate_state:
+        rate_state[key] = {
+            "start": now,
+            "count": 0
+        }
 
-    # Remove requests older than 60 seconds
-    request_log[key] = [
-        t for t in request_log[key]
-        if now - t < 60
-    ]
+    state = rate_state[key]
 
-    # Enforce burst limit
-    if len(request_log[key]) >= BURST_CAPACITY:
+    # Reset window after 60 seconds
+    if now - state["start"] > 60:
+        state["start"] = now
+        state["count"] = 0
+
+    state["count"] += 1
+
+    if state["count"] > BURST_CAPACITY:
         return False, 60
 
-    # Allow request
-    request_log[key].append(now)
     return True, 0
 
 
@@ -56,7 +47,7 @@ def check_rate_limit(key: str):
 @app.post("/security-check")
 async def security_check(request: Request):
     try:
-        # Try to read JSON safely
+        # Safely read JSON
         try:
             data = await request.json()
         except Exception:
