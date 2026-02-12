@@ -48,6 +48,10 @@ def check_rate_limit(key: str):
 @app.post("/security-check")
 async def security_check(request: Request):
     try:
+        # Ignore preflight requests
+        if request.method == "OPTIONS":
+            return {"status": "ok"}
+
         # Safely read JSON
         try:
             data = await request.json()
