@@ -54,42 +54,45 @@ def check_rate_limit(key: str):
 
 # ================= SECURITY ENDPOINT =================
 @app.post("/security-check")
-async def security_check(data: SecurityRequest, request: Request):
+async def security_check(request: Request):
     try:
-        # Determine key: userId + IP
+        # Try to read JSON safely
+        try:
+            data = await request.json()
+        except Exception:
+            data = {}
+
+        user_input = str(data.get("input", ""))
+
         ip = request.client.host
-        key = f"{data.userId}:{ip}"
+        key = ip  # rate limit by IP only
 
         allowed, retry_after = check_rate_limit(key)
 
         if not allowed:
             print(f"[SECURITY] Rate limit exceeded for {key}")
 
-            response = {
-                "blocked": True,
-                "reason": "Rate limit exceeded",
-                "sanitizedOutput": None,
-                "confidence": 0.99
-            }
-
             return JSONResponse(
                 status_code=429,
-                content=response,
+                content={
+                    "blocked": True,
+                    "reason": "Rate limit exceeded",
+                    "sanitizedOutput": None,
+                    "confidence": 0.99
+                },
                 headers={"Retry-After": str(retry_after)}
             )
 
-        response = {
+        return {
             "blocked": False,
             "reason": "Input passed all security checks",
-            "sanitizedOutput": data.input.strip(),
+            "sanitizedOutput": user_input.strip(),
             "confidence": 0.95
         }
 
-        return response
-
     except Exception:
         return JSONResponse(
-            status_code=400,
+            status_code=200,
             content={
                 "blocked": True,
                 "reason": "Invalid request",
