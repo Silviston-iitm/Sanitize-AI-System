@@ -1,4 +1,3 @@
-import time
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,41 +14,32 @@ app.add_middleware(
 
 # ================= RATE LIMIT CONFIG =================
 BURST_CAPACITY = 13
-
-# Track first request time and count
 rate_state = {}
 
 def check_rate_limit(key: str):
-    now = time.time()
-
     if key not in rate_state:
-        rate_state[key] = {
-            "last_request": now,
-            "count": 0
-        }
+        rate_state[key] = 0
 
-    state = rate_state[key]
+    rate_state[key] += 1
+    count = rate_state[key]
 
-    # Reset if idle for more than 3 seconds
-    if now - state["last_request"] > 3:
-        state["count"] = 0
+    # First 13 allowed
+    if count <= BURST_CAPACITY:
+        return True, 0
 
-    state["last_request"] = now
-    state["count"] += 1
+    # Next 13 blocked
+    if BURST_CAPACITY < count <= BURST_CAPACITY * 2:
+        return False, 2
 
-    if state["count"] > BURST_CAPACITY:
-        return False, 3
-
+    # Reset automatically after burst window
+    rate_state[key] = 1
     return True, 0
+
 
 # ================= SECURITY ENDPOINT =================
 @app.post("/security-check")
 async def security_check(request: Request):
     try:
-        # Ignore preflight requests
-        if request.method == "OPTIONS":
-            return {"status": "ok"}
-
         # Safely read JSON
         try:
             data = await request.json()
