@@ -24,25 +24,23 @@ def check_rate_limit(key: str):
 
     if key not in rate_state:
         rate_state[key] = {
-            "start": now,
+            "last_request": now,
             "count": 0
         }
 
     state = rate_state[key]
 
-    # Reset window after 5 seconds (short window for grader)
-    if now - state["start"] > 5:
-        state["start"] = now
+    # Reset if idle for more than 3 seconds
+    if now - state["last_request"] > 3:
         state["count"] = 0
 
+    state["last_request"] = now
     state["count"] += 1
 
     if state["count"] > BURST_CAPACITY:
-        return False, 5
+        return False, 3
 
     return True, 0
-
-
 
 # ================= SECURITY ENDPOINT =================
 @app.post("/security-check")
